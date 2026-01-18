@@ -1,0 +1,18 @@
+[project]
+name = "canvas-grab"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "canvasapi>=3.4.0",
+    "colorama>=0.4.6",
+    "packaging>=25.0",
+    "pyside6>=6.10.1",
+    "questionary>=2.1.1",
+    "requests>=2.32.5",
+    "retrying>=1.4.2",
+    "termcolor>=3.3.0",
+    "toml>=0.10.2",
+    "tqdm>=4.67.1",
+]

@@ -4,8 +4,10 @@ from termcolor import colored
 from .snapshot import Snapshot
 from .snapshot_file import from_canvas_file
 from .snapshot_link import SnapshotLink
+from .snapshot_page import SnapshotPage
 from ..utils import normalize_path, file_regex
 from ..request_batcher import RequestBatcher
+from datetime import datetime
 
 
 class CanvasModuleSnapshot(Snapshot):
@@ -88,10 +90,40 @@ class CanvasModuleSnapshot(Snapshot):
                     filename = f'{module_name}/{normalize_path(snapshot_file.name, file_regex)}'
                     self.add_to_snapshot(filename, snapshot_file)
                 if self.with_link:
-                    if item.type == 'ExternalUrl' or item.type == 'Page':
+                    if item.type == 'ExternalUrl':
                         key = f'{module_name}/{normalize_path(item.title, file_regex)}.html'
                         value = SnapshotLink(
                             item.title, item.html_url, module_name)
+                        self.add_to_snapshot(key, value)
+                    elif item.type == 'Page':
+                        key = f'{module_name}/{normalize_path(item.title, file_regex)}.html'
+
+                        # Fetch page content
+                        try:
+                            page = request_batcher.course.get_page(item.page_url)
+                            body = getattr(page, 'body', None)
+
+                            if body is None or body.strip() == '':
+                                value = SnapshotLink(item.title, item.html_url, module_name)
+                            else:
+                                modified_at = 0
+                                if hasattr(page, 'updated_at') and page.updated_at:
+                                    try:
+                                        dt = datetime.fromisoformat(page.updated_at.replace('Z', '+00:00'))
+                                        modified_at = int(dt.timestamp())
+                                    except:
+                                        pass
+
+                                value = SnapshotPage(
+                                    title=item.title,
+                                    body=body,
+                                    url=item.html_url,
+                                    modified_at=modified_at
+                                )
+                        except Exception as e:
+                            print(f'  Warning: Could not fetch page "{item.title}": {e}')
+                            value = SnapshotLink(item.title, item.html_url, module_name)
+
                         self.add_to_snapshot(key, value)
 
         files = request_batcher.get_files()

@@ -1,7 +1,7 @@
 import questionary
 from .configurable import Configurable
 from .utils import find_choice
-from .snapshot import SnapshotLink
+from .snapshot import SnapshotLink, SnapshotPage
 
 FILE_GROUP = {
     'Video': [".mp4", ".avi", ".mkv"],
@@ -29,7 +29,7 @@ class FileFilter(Configurable):
         if 'All' in self.allowed_group:
             return snapshot
         allowed = self.allowed_extensions()
-        return {k: v for k, v in snapshot.items() if any(map(lambda ext: k.endswith(ext), allowed)) or isinstance(v, SnapshotLink)}
+        return {k: v for k, v in snapshot.items() if any(map(lambda ext: k.endswith(ext), allowed)) or isinstance(v, SnapshotLink) or isinstance(v, SnapshotPage)}
 
     def to_config(self):
         return {

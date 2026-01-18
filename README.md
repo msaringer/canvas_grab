@@ -12,6 +12,15 @@ simple setup wizard to help you get started!
 
 For legacy version, refer to [legacy](https://github.com/skyzh/canvas_grab/tree/legacy) branch.
 
+## Features
+
+- **Download all course files** - Automatically sync all files from Canvas to your local directory
+- **Download Canvas pages** - Download actual HTML page content (not just redirects) with proper timestamps
+- **Smart sync** - Only downloads new or modified files
+- **Resume support** - Interrupt and resume downloads at any time
+- **Flexible organization** - Choose between file-based or module-based organization
+- **File filtering** - Select which file types to download
+
 ## Getting Started
 
 1. Install Python
@@ -35,7 +44,31 @@ If you have any questions, feel free to file an issue [here](https://github.com/
 
 First of all, please install Python 3.8+, and download source code.
 
-We have prepared a simple script to automatically install dependencies and run canvas_grab.
+### Using uv (Recommended)
+
+This project uses [uv](https://github.com/astral-sh/uv) for fast Python package management.
+
+1. Install uv:
+   ```bash
+   # macOS and Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+
+   # Windows
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+
+2. Run canvas_grab:
+   ```bash
+   # macOS and Linux
+   uv run canvas_grab
+
+   # Windows (in Powershell)
+   uv run canvas_grab
+   ```
+
+### Using the convenience scripts
+
+We have prepared simple scripts to automatically install dependencies and run canvas_grab.
 
 For macOS or Linux users, open a Terminal and run:
 
@@ -50,7 +83,7 @@ For Windows users:
 3. If some courses in Canvas LMS have very long module names that exceed Windows limits (which will causes "No such file" error
    when downloading), run the following command to enable long path support.
    ```
-   Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Type DWord -Value 1 
+   Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Type DWord -Value 1
    ```
 4. Open `canvas_grab` source file in file browser, Shift + Right-click on blank area, and select `Run Powershell here`.
 5. Now you can start canvas_grab with a simple command:
@@ -63,6 +96,23 @@ For Windows users:
 The setup wizard will automatically create a configuration for you.
 You can change `config.toml` to fit your needs. If you need to
 re-configure, run `./configure.sh` or `./configure.ps1`.
+
+## Canvas Page Downloads
+
+canvas_grab now downloads actual HTML page content from Canvas instead of creating redirect files.
+
+**How it works:**
+- Pages are downloaded with their full HTML content
+- Timestamps are preserved for proper sync detection
+- If a page has no content or cannot be fetched, a redirect link is created as a fallback
+- Downloaded pages are saved as `.html` files in the `pages/` folder (file mode) or within module folders (module mode)
+
+**Benefits:**
+- Access page content offline
+- Pages update only when content changes (using Canvas timestamps)
+- No need for internet connection to view downloaded pages
+
+**Note:** The first sync after upgrading will re-download all pages as the content changes from redirect files to actual HTML.
 
 ## Common Issues
 

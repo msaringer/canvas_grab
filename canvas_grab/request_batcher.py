@@ -60,6 +60,22 @@ class RequestBatcher:
             return None
 
         if 'pages' not in self.cache:
-            self.cache['pages'] = list(self.course.get_pages())
+            # Try to get pages with body in single API call
+            pages_list = list(self.course.get_pages(include=['body']))
+
+            # Check if first page has body attribute
+            if pages_list and not hasattr(pages_list[0], 'body'):
+                # Fallback: fetch each page individually
+                print('  Fetching page content individually...')
+                self.cache['pages'] = []
+                for page_summary in pages_list:
+                    try:
+                        full_page = self.course.get_page(page_summary.url)
+                        self.cache['pages'].append(full_page)
+                    except Exception as e:
+                        print(f'  Warning: Could not fetch "{page_summary.title}": {e}')
+                        self.cache['pages'].append(page_summary)
+            else:
+                self.cache['pages'] = pages_list
 
         return self.cache['pages']

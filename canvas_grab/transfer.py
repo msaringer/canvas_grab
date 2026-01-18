@@ -6,7 +6,7 @@ from termcolor import colored
 
 from .download_file import download_file as df
 from .utils import apply_datetime_attr, truncate_name
-from .snapshot import SnapshotLink, SnapshotFile
+from .snapshot import SnapshotLink, SnapshotFile, SnapshotPage
 
 TIMEOUT = 3
 ATTEMPT = 3
@@ -69,6 +69,10 @@ class Transfer(object):
                         path, plan.created_at, plan.modified_at)
                 elif isinstance(plan, SnapshotLink):
                     Path(path).write_text(plan.content(), encoding='utf-8')
+                elif isinstance(plan, SnapshotPage):
+                    Path(path).write_text(plan.content(), encoding='utf-8')
+                    if plan.modified_at > 0:
+                        apply_datetime_attr(path, plan.modified_at, plan.modified_at)
                 else:
                     print(colored('Unsupported snapshot type', 'red'))
 

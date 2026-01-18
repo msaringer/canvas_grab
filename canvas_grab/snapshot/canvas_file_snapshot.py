@@ -3,9 +3,11 @@ from termcolor import colored
 from .snapshot import Snapshot
 from .snapshot_file import from_canvas_file
 from .snapshot_link import SnapshotLink
+from .snapshot_page import SnapshotPage
 from ..request_batcher import RequestBatcher
 from canvasapi.exceptions import ResourceDoesNotExist
 from ..utils import normalize_path, file_regex
+from datetime import datetime
 
 class CanvasFileSnapshot(Snapshot):
     """Takes a snapshot of files on Canvas, organized by file tab.
@@ -79,8 +81,29 @@ class CanvasFileSnapshot(Snapshot):
             pages = request_batcher.get_pages() or []
             for page in pages:
                 key = f'pages/{normalize_path(page.title, file_regex)}.html'
-                value = SnapshotLink(
-                    page.title, page.html_url, "Page")
+
+                # Check if page has body content
+                body = getattr(page, 'body', None)
+                if body is None or body.strip() == '':
+                    # Fallback to redirect link
+                    value = SnapshotLink(page.title, page.html_url, "Page")
+                else:
+                    # Create page with content
+                    modified_at = 0
+                    if hasattr(page, 'updated_at') and page.updated_at:
+                        try:
+                            dt = datetime.fromisoformat(page.updated_at.replace('Z', '+00:00'))
+                            modified_at = int(dt.timestamp())
+                        except:
+                            pass
+
+                    value = SnapshotPage(
+                        title=page.title,
+                        body=body,
+                        url=page.html_url,
+                        modified_at=modified_at
+                    )
+
                 self.add_to_snapshot(key, value)
             print(f'  {len(pages)} pages in total')
             yield (0.2, '请稍候', f'共 {len(pages)} 个链接')
