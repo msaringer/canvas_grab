@@ -79,3 +79,24 @@ class RequestBatcher:
                 self.cache['pages'] = pages_list
 
         return self.cache['pages']
+
+    def get_assignments(self):
+        if 'assignments' not in self.get_tabs():
+            return None
+
+        if 'assignments' not in self.cache:
+            all_assignments = list(self.course.get_assignments())
+
+            # Filter out discussions and quizzes
+            self.cache['assignments'] = [
+                assignment for assignment in all_assignments
+                if not self._should_skip_assignment(assignment)
+            ]
+
+        return self.cache['assignments']
+
+    def _should_skip_assignment(self, assignment):
+        """Check if assignment should be skipped based on submission types."""
+        submission_types = getattr(assignment, 'submission_types', [])
+        return ('discussion_topic' in submission_types or
+                'online_quiz' in submission_types)

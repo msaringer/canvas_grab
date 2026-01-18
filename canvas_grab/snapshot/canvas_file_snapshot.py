@@ -4,6 +4,7 @@ from .snapshot import Snapshot
 from .snapshot_file import from_canvas_file
 from .snapshot_link import SnapshotLink
 from .snapshot_page import SnapshotPage
+from .snapshot_assignment import SnapshotAssignment
 from ..request_batcher import RequestBatcher
 from canvasapi.exceptions import ResourceDoesNotExist
 from ..utils import normalize_path, file_regex
@@ -107,6 +108,56 @@ class CanvasFileSnapshot(Snapshot):
                 self.add_to_snapshot(key, value)
             print(f'  {len(pages)} pages in total')
             yield (0.2, '请稍候', f'共 {len(pages)} 个链接')
+
+            # Add assignments
+            yield (None, '正在获取作业', None)
+            assignments = request_batcher.get_assignments() or []
+            for assignment in assignments:
+                key = f'assignments/{normalize_path(assignment.name, file_regex)}.html'
+
+                # Parse metadata
+                modified_at = 0
+                if hasattr(assignment, 'updated_at') and assignment.updated_at:
+                    try:
+                        dt = datetime.fromisoformat(assignment.updated_at.replace('Z', '+00:00'))
+                        modified_at = int(dt.timestamp())
+                    except:
+                        pass
+
+                # Get description
+                description = getattr(assignment, 'description', '') or ''
+
+                # Get attachments (if available)
+                attachment_files = []
+                if hasattr(assignment, 'attachments'):
+                    for attach in assignment.attachments:
+                        # Convert to SnapshotFile
+                        try:
+                            snapshot_file = from_canvas_file(attach)
+                            attachment_files.append(snapshot_file)
+
+                            # Add attachment to snapshot
+                            attach_key = f'assignments/{normalize_path(assignment.name, file_regex)}_files/{normalize_path(snapshot_file.name, file_regex)}'
+                            self.add_to_snapshot(attach_key, snapshot_file)
+                        except:
+                            pass
+
+                # Create SnapshotAssignment
+                value = SnapshotAssignment(
+                    title=assignment.name,
+                    description=description,
+                    url=getattr(assignment, 'html_url', ''),
+                    modified_at=modified_at,
+                    due_at=getattr(assignment, 'due_at', '') or '',
+                    points_possible=getattr(assignment, 'points_possible', 0.0) or 0.0,
+                    submission_types=getattr(assignment, 'submission_types', []) or [],
+                    attachments=attachment_files
+                )
+
+                self.add_to_snapshot(key, value)
+
+            print(f'  {len(assignments)} assignments in total')
+            yield (0.3, '请稍候', f'共 {len(assignments)} 个作业')
 
     def get_snapshot(self):
         """Get the previously-taken snapshot

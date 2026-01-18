@@ -4,3 +4,4 @@ from .canvas_file_snapshot import CanvasFileSnapshot
 from .snapshot_file import SnapshotFile
 from .snapshot_link import SnapshotLink
 from .snapshot_page import SnapshotPage
+from .snapshot_assignment import SnapshotAssignment

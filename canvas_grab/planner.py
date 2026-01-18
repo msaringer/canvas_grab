@@ -1,4 +1,4 @@
-from .snapshot import SnapshotFile, SnapshotLink, SnapshotPage
+from .snapshot import SnapshotFile, SnapshotLink, SnapshotPage, SnapshotAssignment
 
 
 class Planner(object):
@@ -38,6 +38,13 @@ class Planner(object):
                     if to_item.size != content_length:
                         plans.append(('update', key, from_item))
                 if isinstance(from_item, SnapshotPage):
+                    content_length = len(from_item.content().encode('utf-8'))
+                    # Use timestamp if available, otherwise content length
+                    if from_item.modified_at > 0 and to_item.modified_at != from_item.modified_at:
+                        plans.append(('update', key, from_item))
+                    elif to_item.size != content_length:
+                        plans.append(('update', key, from_item))
+                if isinstance(from_item, SnapshotAssignment):
                     content_length = len(from_item.content().encode('utf-8'))
                     # Use timestamp if available, otherwise content length
                     if from_item.modified_at > 0 and to_item.modified_at != from_item.modified_at:
