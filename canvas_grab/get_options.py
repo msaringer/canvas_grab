@@ -59,6 +59,16 @@ def get_options():
                         default=False, help="Skip update checking. This will be helpful without "
                         "a stable network connection and prevent reconfiguration.")
 
+    parser.add_argument("--fetch-external", dest="fetch_external", action="store_true",
+                        default=False,
+                        help="Skip the Canvas sync. Instead, walk the download folder and "
+                        "archive external resources (web pages, videos) referenced by the "
+                        "downloaded HTML pages, rewriting links to local copies. Requires "
+                        "`monolith` and `yt-dlp` on PATH.")
+    parser.add_argument("--fetch-external-verbose", dest="fetch_external_verbose",
+                        action="store_true", default=False,
+                        help="Show monolith/yt-dlp output while fetching external resources.")
+
     args = parser.parse_args()
 
     # TODO quiet mode
@@ -91,4 +101,4 @@ def get_options():
     if args.download:
         config.download_folder = args.download
 
-    return args.interactive, args.noupdate, config
+    return args.interactive, args.noupdate, config, args

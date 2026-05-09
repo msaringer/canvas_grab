@@ -93,7 +93,7 @@ class Main:
         init()
         # Welcome users, and load configurations.
         try:
-            _, self._noupdate, self._config = canvas_grab.get_options.get_options()
+            _, self._noupdate, self._config, _ = canvas_grab.get_options.get_options()
         except TypeError:
             # User canceled the configuration process
             return

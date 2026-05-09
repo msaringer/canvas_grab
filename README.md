@@ -16,10 +16,37 @@ For legacy version, refer to [legacy](https://github.com/skyzh/canvas_grab/tree/
 
 - **Download all course files** - Automatically sync all files from Canvas to your local directory
 - **Download Canvas pages** - Download actual HTML page content (not just redirects) with proper timestamps
+- **Archive external resources** (`--fetch-external`) - For pages already downloaded, follow the external links/embeds and save articles as self-contained HTML and videos as `.mp4` with embedded subs + `.vtt` sidecars, then rewrite links to local copies
 - **Smart sync** - Only downloads new or modified files
 - **Resume support** - Interrupt and resume downloads at any time
 - **Flexible organization** - Choose between file-based or module-based organization
 - **File filtering** - Select which file types to download
+
+## Archiving external resources
+
+Many Canvas pages link out to required readings on the open web (Forbes, HBR, etc.) and embed videos from YouTube/Vimeo. After a normal sync, run:
+
+```bash
+uv run canvas_grab --fetch-external
+```
+
+For each `*.html` page already on disk, this will:
+
+- save external articles as a single self-contained `.html` file (via [`monolith`](https://github.com/Y2Z/monolith))
+- save YouTube/Vimeo/etc. videos as `.mp4` with embedded subs and a `.vtt` sidecar (via [`yt-dlp`](https://github.com/yt-dlp/yt-dlp))
+- store everything in a sidecar folder named `<page>_external/`
+- rewrite the `<a href>` / `<iframe src>` in the original Canvas page to point at the local copies (canvas-internal links are left alone — they're handled by the normal sync)
+
+Re-running is idempotent: existing files are skipped and only previously-failed URLs are retried. The original page's mtime is preserved so the next normal sync won't think the page has changed.
+
+Prerequisites:
+
+```bash
+brew install monolith yt-dlp     # macOS
+# or your platform's equivalent
+```
+
+Add `--fetch-external-verbose` to see the underlying `monolith` / `yt-dlp` output.
 
 ## Getting Started
 

@@ -12,9 +12,18 @@ def main():
     init()
     # Welcome users, and load configurations.
     try:
-        interactive, noupdate, config = canvas_grab.get_options.get_options()
+        interactive, noupdate, config, args = canvas_grab.get_options.get_options()
     except TypeError:
         # User canceled the configuration process
+        return
+
+    if getattr(args, 'fetch_external', False):
+        opts = canvas_grab.external_fetch.FetchOptions(
+            verbose=getattr(args, 'fetch_external_verbose', False),
+        )
+        canvas_grab.external_fetch.run(config.download_folder, opts)
+        if not noupdate:
+            canvas_grab.version.check_latest_version()
         return
 
     # Finally, log in and start synchronize
