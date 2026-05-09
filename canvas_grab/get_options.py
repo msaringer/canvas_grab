@@ -67,7 +67,12 @@ def get_options():
                         "`monolith` and `yt-dlp` on PATH.")
     parser.add_argument("--fetch-external-verbose", dest="fetch_external_verbose",
                         action="store_true", default=False,
-                        help="Show monolith/yt-dlp output while fetching external resources.")
+                        help="Show SingleFile/yt-dlp output while fetching external resources.")
+    parser.add_argument("--fetch-external-exclude", dest="fetch_external_exclude",
+                        action="append", default=[],
+                        help="Skip URLs whose host matches the given domain (or any "
+                        "subdomain of it). Repeatable, and accepts comma-separated lists. "
+                        "Example: --fetch-external-exclude sfu.ca,example.com")
 
     args = parser.parse_args()
 

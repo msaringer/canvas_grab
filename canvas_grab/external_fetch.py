@@ -2,8 +2,11 @@
 
 For each ``*.html`` file under the download folder, this module:
 - parses the HTML for external links and iframe embeds
-- downloads articles via ``monolith`` and videos via ``yt-dlp`` into a sidecar folder
-  named ``<page>_external/`` next to the original HTML
+- downloads articles via the ``capsulecode/singlefile`` Docker image (a real headless
+  Chrome — produces dramatically smaller archives than CLI tools that use a static
+  fetcher), videos via ``yt-dlp``, and PDFs/binaries directly via ``requests``
+- writes everything into a sidecar folder named ``<page>_external/`` next to the
+  original HTML
 - rewrites the original HTML to point to the local copies (preserving on-disk mtime
   so canvas_grab's planner won't think the page changed)
 
@@ -24,8 +27,11 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
+import requests
 from bs4 import BeautifulSoup
 from termcolor import colored
+
+from .configurable import Configurable
 
 
 VIDEO_HOSTS = (
@@ -40,8 +46,39 @@ CANVAS_HOSTS = ('canvas.sfu.ca',)
 # Skip these — interactive/non-archivable embeds.
 SKIP_HOSTS = ('h5p.org',)
 
+# URL paths ending in these extensions are downloaded raw (with `requests`)
+# instead of through SingleFile, which would wrap them in HTML.
+BINARY_EXTS = (
+    '.pdf', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx',
+    '.zip', '.epub', '.mp3', '.csv', '.rtf',
+)
+
 ARCHIVE_FOLDER_NAME = '_canvas_grab_archive'
 SIDECAR_SUFFIX = '_external'
+
+
+class FetchExternalConfig(Configurable):
+    """Persisted settings for external resource archiving.
+
+    When ``enabled`` is true, a normal ``canvas_grab`` run performs the external
+    fetch immediately after the Canvas sync completes. The ``--fetch-external``
+    CLI flag is independent: it always runs the external fetch (and skips the
+    Canvas sync), regardless of this setting.
+    """
+
+    def __init__(self):
+        self.enabled: bool = False
+        self.exclude_domains: list[str] = []
+
+    def to_config(self):
+        return {
+            'enabled': self.enabled,
+            'exclude_domains': list(self.exclude_domains),
+        }
+
+    def from_config(self, config):
+        self.enabled = bool(config.get('enabled', False))
+        self.exclude_domains = list(config.get('exclude_domains', []) or [])
 
 
 @dataclass
@@ -50,9 +87,14 @@ class FetchOptions:
     sub_langs: str = 'en.*,en'
     video_format: str = 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b'
     user_agent: Optional[str] = None
-    monolith_extra_args: tuple = ()
+    singlefile_image: str = 'capsulecode/singlefile'
+    singlefile_timeout: int = 180
+    singlefile_extra_args: tuple = ()
     yt_dlp_extra_args: tuple = ()
     verbose: bool = False
+    # Extra domains to skip in addition to CANVAS_HOSTS / SKIP_HOSTS. Matched by
+    # exact host or subdomain (e.g. "sfu.ca" matches "www.sfu.ca" and "x.y.sfu.ca").
+    exclude_domains: tuple = ()
 
 
 def _host(url: str) -> str:
@@ -128,21 +170,58 @@ def _slug(text: str, max_len: int = 80) -> str:
     return s[:max_len].strip('_') or 'untitled'
 
 
-def article_filename(url: str) -> str:
+def url_binary_ext(url: str) -> Optional[str]:
+    """If the URL path ends in a known binary extension, return it (with the dot)."""
+    path = urlparse(url).path.lower()
+    for ext in BINARY_EXTS:
+        if path.endswith(ext):
+            return ext
+    return None
+
+
+def _composed_filename(url: str, ext: str) -> str:
     p = urlparse(url)
     host = (p.hostname or 'site').lower()
     if host.startswith('www.'):
         host = host[4:]
     segs = [s for s in p.path.split('/') if s]
     last = segs[-1] if segs else 'index'
+    if last.lower().endswith(ext):
+        last = last[: -len(ext)]
     digest = hashlib.sha1(url.encode('utf-8')).hexdigest()[:6]
-    return f'{_slug(host, 40)}__{_slug(last, 60)}__{digest}.html'
+    return f'{_slug(host, 40)}__{_slug(last, 60)}__{digest}{ext}'
+
+
+def article_filename(url: str) -> str:
+    return _composed_filename(url, '.html')
+
+
+def binary_filename(url: str, ext: str) -> str:
+    return _composed_filename(url, ext)
 
 
 def video_basename(url: str) -> str:
+    """Stable prefix for the video file. The actual filename adds the title at
+    download time (yt-dlp's ``%(title)s``)."""
     host = (_host(url) or 'video').replace('www.', '')
     short = host.split('.')[0] if '.' in host else host
     return f'{_slug(short, 20)}_{_predicted_id(url)}'
+
+
+def find_existing_video(dest_dir: Path, basename: str) -> Optional[Path]:
+    """Locate a previously-downloaded video by its stable prefix.
+
+    Tolerates both new (``<basename>_<title>.mp4``) and old (``<basename>.mp4``)
+    naming so a re-run after the title-in-filename change doesn't re-download.
+    """
+    if not dest_dir.is_dir():
+        return None
+    exact = dest_dir / f'{basename}.mp4'
+    if exact.exists():
+        return exact
+    for p in sorted(dest_dir.glob(f'{basename}_*.mp4')):
+        return p
+    return None
 
 
 def collect_links(soup: BeautifulSoup) -> list[tuple]:
@@ -158,18 +237,48 @@ def collect_links(soup: BeautifulSoup) -> list[tuple]:
 
 
 def fetch_article(url: str, dest: Path, opts: FetchOptions) -> bool:
-    cmd = ['monolith', url, '-o', str(dest)]
+    """Archive `url` into `dest` using SingleFile via Docker.
+
+    SingleFile uses a real headless Chrome inside the container, so it captures
+    only the rendered DOM (no lazy-loaded image alternates, no analytics blobs,
+    no oversized inlined videos). HTML is written to stdout by the container,
+    which we stream straight into `dest`.
+    """
+    cmd = ['docker', 'run', '--rm', '-i', opts.singlefile_image]
     if opts.user_agent:
         cmd += ['--user-agent', opts.user_agent]
-    cmd += list(opts.monolith_extra_args)
-    proc = subprocess.run(
-        cmd, capture_output=not opts.verbose, text=True, check=False
-    )
-    return proc.returncode == 0 and dest.exists() and dest.stat().st_size > 0
+    cmd += list(opts.singlefile_extra_args)
+    cmd.append(url)
+    try:
+        with open(dest, 'wb') as f:
+            proc = subprocess.run(
+                cmd,
+                stdout=f,
+                stderr=None if opts.verbose else subprocess.DEVNULL,
+                check=False,
+                timeout=opts.singlefile_timeout,
+            )
+    except subprocess.TimeoutExpired:
+        if dest.exists():
+            dest.unlink()
+        return False
+    if proc.returncode != 0 or not dest.exists() or dest.stat().st_size == 0:
+        if dest.exists():
+            dest.unlink()
+        return False
+    # Sanity check: SingleFile output starts with an HTML doctype.
+    with open(dest, 'rb') as f:
+        head = f.read(64).lstrip().lower()
+    if not head.startswith(b'<!doctype html') and not head.startswith(b'<html'):
+        dest.unlink()
+        return False
+    return True
 
 
 def fetch_video(url: str, dest_dir: Path, basename: str, opts: FetchOptions) -> Optional[Path]:
-    template = str(dest_dir / f'{basename}.%(ext)s')
+    # `%(title).80B` caps the title at 80 bytes so the resulting filename
+    # stays well under typical filesystem limits.
+    template = str(dest_dir / f'{basename}_%(title).80B.%(ext)s')
     cmd = [
         'yt-dlp',
         '--no-progress', '--no-warnings',
@@ -189,8 +298,23 @@ def fetch_video(url: str, dest_dir: Path, basename: str, opts: FetchOptions) -> 
     )
     if proc.returncode != 0:
         return None
-    out = dest_dir / f'{basename}.mp4'
-    return out if out.exists() else None
+    return find_existing_video(dest_dir, basename)
+
+
+def fetch_binary(url: str, dest: Path, opts: FetchOptions) -> bool:
+    headers = {'User-Agent': opts.user_agent or 'Mozilla/5.0 (canvas_grab)'}
+    try:
+        with requests.get(url, stream=True, timeout=30, headers=headers, allow_redirects=True) as r:
+            r.raise_for_status()
+            with open(dest, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=64 * 1024):
+                    if chunk:
+                        f.write(chunk)
+    except Exception:
+        if dest.exists():
+            dest.unlink()
+        return False
+    return dest.exists() and dest.stat().st_size > 0
 
 
 def _replace_iframe_with_video(soup: BeautifulSoup, iframe, src: str):
@@ -218,13 +342,16 @@ def process_html_file(html_path: Path, opts: FetchOptions) -> tuple[int, int, in
             continue
         if is_canvas_internal(url) or is_skip(url):
             continue
+        if opts.exclude_domains and _host_matches(_host(url), opts.exclude_domains):
+            continue
 
         if is_video_url(url):
             dl_url = normalize_video_url(url)
             base = video_basename(dl_url)
-            target = sidecar / f'{base}.mp4'
+            existing = find_existing_video(sidecar, base)
 
-            if opts.skip_existing and target.exists():
+            if opts.skip_existing and existing is not None:
+                target = existing
                 skipped += 1
             else:
                 sidecar.mkdir(parents=True, exist_ok=True)
@@ -243,26 +370,47 @@ def process_html_file(html_path: Path, opts: FetchOptions) -> tuple[int, int, in
             else:
                 el[attr] = rel
             rewrites += 1
-        else:
-            fname = article_filename(url)
+            continue
+
+        bin_ext = url_binary_ext(url)
+        if bin_ext:
+            fname = binary_filename(url, bin_ext)
             target = sidecar / fname
 
             if opts.skip_existing and target.exists():
                 skipped += 1
             else:
                 sidecar.mkdir(parents=True, exist_ok=True)
-                print(f'    {colored("article", "cyan")} {url}')
-                ok = fetch_article(url, target, opts)
-                if not ok:
+                print(f'    {colored(bin_ext.lstrip(".").ljust(7), "cyan")} {url}')
+                if not fetch_binary(url, target, opts):
                     failed += 1
-                    if target.exists():
-                        target.unlink()
                     print(f'      {colored("failed", "red")}')
                     continue
                 downloaded += 1
 
             el[attr] = f'{sidecar.name}/{fname}'
             rewrites += 1
+            continue
+
+        fname = article_filename(url)
+        target = sidecar / fname
+
+        if opts.skip_existing and target.exists():
+            skipped += 1
+        else:
+            sidecar.mkdir(parents=True, exist_ok=True)
+            print(f'    {colored("article", "cyan")} {url}')
+            ok = fetch_article(url, target, opts)
+            if not ok:
+                failed += 1
+                if target.exists():
+                    target.unlink()
+                print(f'      {colored("failed", "red")}')
+                continue
+            downloaded += 1
+
+        el[attr] = f'{sidecar.name}/{fname}'
+        rewrites += 1
 
     if rewrites:
         st = html_path.stat()
@@ -286,8 +434,8 @@ def run(download_folder: str, opts: Optional[FetchOptions] = None) -> None:
         return
 
     missing = []
-    if not shutil.which('monolith'):
-        missing.append(('monolith', 'brew install monolith'))
+    if not shutil.which('docker'):
+        missing.append(('docker', 'install Docker Desktop or `brew install --cask docker`'))
     if not shutil.which('yt-dlp'):
         missing.append(('yt-dlp', 'brew install yt-dlp  # or: pipx install yt-dlp'))
     if missing:
@@ -295,6 +443,22 @@ def run(download_folder: str, opts: Optional[FetchOptions] = None) -> None:
             print(colored(f'{tool} is not installed.', 'red'))
             print(f'  Install with: {install}')
         return
+    # Pull the SingleFile image up-front so the first article fetch isn't slow
+    # and so a missing/typo'd image fails fast instead of per-URL.
+    pull = subprocess.run(
+        ['docker', 'image', 'inspect', opts.singlefile_image],
+        capture_output=True, check=False,
+    )
+    if pull.returncode != 0:
+        print(colored(f'Pulling Docker image {opts.singlefile_image}...', 'cyan'))
+        proc = subprocess.run(
+            ['docker', 'pull', opts.singlefile_image], check=False,
+        )
+        if proc.returncode != 0:
+            print(colored(
+                f'Failed to pull {opts.singlefile_image}. '
+                'Is the Docker daemon running?', 'red'))
+            return
 
     html_files = sorted(
         p for p in base.rglob('*.html')

@@ -7,6 +7,7 @@ from .endpoint import Endpoint
 from .organize_mode import OrganizeMode
 from ..course_filter import CourseFilter
 from ..file_filter import FileFilter
+from ..external_fetch import FetchExternalConfig
 from ..utils import filter_available_courses
 
 
@@ -20,6 +21,7 @@ class Config(Configurable, Interactable):
         self.organize_mode = OrganizeMode()
         self.download_folder = 'files'
         self.file_filter = FileFilter()
+        self.fetch_external = FetchExternalConfig()
 
     def to_config(self):
         return {
@@ -27,7 +29,8 @@ class Config(Configurable, Interactable):
             'course_filter': self.course_filter.to_config(),
             'organize_mode': self.organize_mode.to_config(),
             'download_folder': self.download_folder,
-            'file_filter': self.file_filter.to_config()
+            'file_filter': self.file_filter.to_config(),
+            'fetch_external': self.fetch_external.to_config(),
         }
 
     def try_from_config(self, func):
@@ -56,6 +59,8 @@ class Config(Configurable, Interactable):
         _, err = self.try_from_config(
             lambda: self.file_filter.from_config(config['file_filter']))
         final_err = final_err or err
+        # New section — tolerate its absence in older config files.
+        self.fetch_external.from_config(config.get('fetch_external', {}))
         if final_err:
             raise final_err
 

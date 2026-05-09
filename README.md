@@ -32,8 +32,9 @@ uv run canvas_grab --fetch-external
 
 For each `*.html` page already on disk, this will:
 
-- save external articles as a single self-contained `.html` file (via [`monolith`](https://github.com/Y2Z/monolith))
-- save YouTube/Vimeo/etc. videos as `.mp4` with embedded subs and a `.vtt` sidecar (via [`yt-dlp`](https://github.com/yt-dlp/yt-dlp))
+- save external articles as a single self-contained `.html` file using [SingleFile](https://github.com/gildas-lormeau/single-file) running in Docker (`capsulecode/singlefile`) — a real headless Chrome that captures only what the page actually renders, producing dramatically smaller archives than static fetchers
+- download PDFs (and other binaries — `.doc(x)`, `.ppt(x)`, `.xls(x)`, `.zip`, `.epub`, `.mp3`, `.csv`, `.rtf`) directly via `requests`, preserving the original extension
+- save YouTube/Vimeo/etc. videos as `.mp4` (with embedded subs and a `.vtt` sidecar) via [`yt-dlp`](https://github.com/yt-dlp/yt-dlp); the filename includes the video title
 - store everything in a sidecar folder named `<page>_external/`
 - rewrite the `<a href>` / `<iframe src>` in the original Canvas page to point at the local copies (canvas-internal links are left alone — they're handled by the normal sync)
 
@@ -42,11 +43,29 @@ Re-running is idempotent: existing files are skipped and only previously-failed 
 Prerequisites:
 
 ```bash
-brew install monolith yt-dlp     # macOS
-# or your platform's equivalent
+brew install --cask docker    # or install Docker Desktop manually, and start it
+brew install yt-dlp           # or: pipx install yt-dlp
 ```
 
-Add `--fetch-external-verbose` to see the underlying `monolith` / `yt-dlp` output.
+The `capsulecode/singlefile` image is pulled automatically on first use.
+
+Add `--fetch-external-verbose` to see the underlying SingleFile / `yt-dlp` output.
+
+Use `--fetch-external-exclude` to skip URLs on specific domains (matches the host or any subdomain). Repeatable and comma-separated, e.g.:
+
+```bash
+uv run canvas_grab --fetch-external --fetch-external-exclude sfu.ca,youtube.com
+```
+
+Or enable it permanently in `config.toml` so a normal `uv run canvas_grab` runs the external archive automatically after each Canvas sync:
+
+```toml
+[fetch_external]
+enabled = true
+exclude_domains = ["sfu.ca"]
+```
+
+CLI excludes are added to (not replacing) the ones in `config.toml`. The `--fetch-external` CLI flag still works on its own and ignores `enabled` (it always runs only the external fetch, no sync).
 
 ## Getting Started
 

@@ -17,11 +17,24 @@ def main():
         # User canceled the configuration process
         return
 
-    if getattr(args, 'fetch_external', False):
-        opts = canvas_grab.external_fetch.FetchOptions(
+    def _build_fetch_opts():
+        cli_excludes = [
+            d.strip().lower()
+            for raw in getattr(args, 'fetch_external_exclude', []) or []
+            for d in raw.split(',')
+            if d.strip()
+        ]
+        # CLI extends (does not replace) config.toml's fetch_external.exclude_domains.
+        excludes = tuple(dict.fromkeys(
+            [d.lower() for d in config.fetch_external.exclude_domains] + cli_excludes
+        ))
+        return canvas_grab.external_fetch.FetchOptions(
             verbose=getattr(args, 'fetch_external_verbose', False),
+            exclude_domains=excludes,
         )
-        canvas_grab.external_fetch.run(config.download_folder, opts)
+
+    if getattr(args, 'fetch_external', False):
+        canvas_grab.external_fetch.run(config.download_folder, _build_fetch_opts())
         if not noupdate:
             canvas_grab.version.check_latest_version()
         return
@@ -76,6 +89,11 @@ def main():
         transfer = canvas_grab.transfer.Transfer()
         transfer.transfer(
             on_disk_path, f'{config.download_folder}/_canvas_grab_archive', plans)
+
+    if config.fetch_external.enabled:
+        print()
+        print(colored('Archiving external resources from downloaded pages...', 'cyan'))
+        canvas_grab.external_fetch.run(config.download_folder, _build_fetch_opts())
 
     if not noupdate:
         canvas_grab.version.check_latest_version()
