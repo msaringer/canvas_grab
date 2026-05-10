@@ -67,6 +67,46 @@ exclude_domains = ["sfu.ca"]
 
 CLI excludes are added to (not replacing) the ones in `config.toml`. The `--fetch-external` CLI flag still works on its own and ignores `enabled` (it always runs only the external fetch, no sync).
 
+### Limiting the run to one module
+
+Use `--fetch-external-only PATTERN` (repeatable, comma-separated) to process only HTML files whose path contains the substring (case-insensitive). Handy when iterating on a single module:
+
+```bash
+uv run canvas_grab --fetch-external --fetch-external-only "Module 9"
+```
+
+Or persistently in `config.toml`:
+
+```toml
+[fetch_external]
+only_paths = ["Module 9"]
+```
+
+### Leave Canvas pages untouched (`--no-rewrite-links`)
+
+By default, the original Canvas HTML is rewritten so links and embeds point at the local copies. If you want the downloads as a *reference library* and prefer to leave the Canvas pages alone (they keep their original `<a href>`s), use:
+
+```bash
+uv run canvas_grab --fetch-external --no-rewrite-links
+```
+
+Or in `config.toml`:
+
+```toml
+[fetch_external]
+rewrite_links = false
+```
+
+### Where the source URL lives
+
+Whatever the rewrite mode, the source URL of every archived file is preserved in three independent places:
+
+- **HTML archives** — SingleFile embeds a top-of-file comment (`url: https://…`) in every saved page.
+- **Videos** — yt-dlp's `--add-metadata` writes the source URL into the MP4's metadata tags (visible in `ffprobe`, Finder Get Info, etc.).
+- **Sidecar index** — every `<page>_external/` folder contains a `_sources.json` mapping each archived filename to `{url, kind, fetched_at}`. Updated incrementally on each run.
+
+So even if you copy a downloaded PDF or video off to another folder, you can still trace back to where it came from.
+
 ### Driving a real Chrome (`--with-chrome`)
 
 The default Docker SingleFile is a vanilla headless Chromium and gets blocked by sites that fingerprint headless browsers (Cloudflare, Akamai, etc.). Switching to a real Chrome instance with a persistent profile defeats most of those challenges, and lets you preinstall extensions like uBlock Origin or accept consent banners once and have them stick.

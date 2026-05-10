@@ -139,6 +139,7 @@ dmypy.json
 
 .checkpoint
 files/
+files_archive/
 config.toml
 .vscode/
 download_video.sh

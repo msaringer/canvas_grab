@@ -84,6 +84,18 @@ def get_options():
                         default=None,
                         help="Override [fetch_external].chrome_user_data_dir for "
                         "this run. Defaults to ~/.canvas_grab/chrome-profile.")
+    parser.add_argument("--fetch-external-only", dest="fetch_external_only",
+                        action="append", default=[],
+                        help="Only process HTML files whose path contains the given "
+                        "substring (case-insensitive). Repeatable, comma-separated. "
+                        "Useful for limiting to one module: --fetch-external-only "
+                        "\"Module 9\"")
+    parser.add_argument("--no-rewrite-links", dest="rewrite_links",
+                        action="store_false", default=None,
+                        help="Download external resources but do not modify the "
+                        "Canvas HTML pages — leave their <a href>/<iframe src> "
+                        "alone. Source URLs are still recorded in each "
+                        "_external/_sources.json index.")
 
     args = parser.parse_args()
 

@@ -18,6 +18,7 @@ because they're handled by the existing file-sync.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -26,6 +27,7 @@ import subprocess
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
@@ -76,6 +78,7 @@ BOT_CHALLENGE_MARKERS = (
 
 ARCHIVE_FOLDER_NAME = '_canvas_grab_archive'
 SIDECAR_SUFFIX = '_external'
+SOURCES_INDEX = '_sources.json'
 
 
 DEFAULT_CHROME_USER_DATA_DIR = '~/.canvas_grab/chrome-profile'
@@ -108,6 +111,8 @@ class FetchExternalConfig(Configurable):
     def __init__(self):
         self.enabled: bool = False
         self.exclude_domains: list[str] = []
+        self.only_paths: list[str] = []
+        self.rewrite_links: bool = True
         self.with_chrome: bool = False
         self.chrome_user_data_dir: str = DEFAULT_CHROME_USER_DATA_DIR
         self.chrome_executable: str = ''  # empty = auto-detect
@@ -117,6 +122,8 @@ class FetchExternalConfig(Configurable):
         return {
             'enabled': self.enabled,
             'exclude_domains': list(self.exclude_domains),
+            'only_paths': list(self.only_paths),
+            'rewrite_links': self.rewrite_links,
             'with_chrome': self.with_chrome,
             'chrome_user_data_dir': self.chrome_user_data_dir,
             'chrome_executable': self.chrome_executable,
@@ -126,6 +133,8 @@ class FetchExternalConfig(Configurable):
     def from_config(self, config):
         self.enabled = bool(config.get('enabled', False))
         self.exclude_domains = list(config.get('exclude_domains', []) or [])
+        self.only_paths = list(config.get('only_paths', []) or [])
+        self.rewrite_links = bool(config.get('rewrite_links', True))
         self.with_chrome = bool(config.get('with_chrome', False))
         self.chrome_user_data_dir = (
             config.get('chrome_user_data_dir') or DEFAULT_CHROME_USER_DATA_DIR
@@ -153,6 +162,13 @@ class FetchOptions:
     # Extra domains to skip in addition to CANVAS_HOSTS / SKIP_HOSTS. Matched by
     # exact host or subdomain (e.g. "sfu.ca" matches "www.sfu.ca" and "x.y.sfu.ca").
     exclude_domains: tuple = ()
+    # Substring patterns matched against the relative HTML path; when non-empty,
+    # only HTML files whose path contains at least one pattern are processed.
+    only_paths: tuple = ()
+    # If False, downloads happen but the original Canvas HTML is left untouched
+    # (no rewriting of <a href> / <iframe src>). The sidecar folder + sources
+    # index still record where each archived file came from.
+    rewrite_links: bool = True
 
 
 def _host(url: str) -> str:
@@ -292,6 +308,48 @@ def collect_links(soup: BeautifulSoup) -> list[tuple]:
     for f in soup.find_all('iframe', src=True):
         out.append((f, 'src', f['src']))
     return out
+
+
+def _load_sources(sidecar: Path) -> dict:
+    """Load `_sources.json` from a sidecar folder, returning {} if absent/corrupt."""
+    path = sidecar / SOURCES_INDEX
+    if not path.exists():
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_sources(sidecar: Path, sources: dict) -> None:
+    if not sources:
+        return
+    sidecar.mkdir(parents=True, exist_ok=True)
+    path = sidecar / SOURCES_INDEX
+    # Keep stable ordering so diffs are clean.
+    ordered = {k: sources[k] for k in sorted(sources)}
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(ordered, f, indent=2, sort_keys=True)
+        f.write('\n')
+
+
+def _record_source(sources: dict, filename: str, url: str, kind: str) -> None:
+    """Add/refresh one entry in the sources map."""
+    existing = sources.get(filename) or {}
+    sources[filename] = {
+        'url': url,
+        'kind': kind,
+        # Preserve the original first-seen timestamp; refresh `fetched_at` only
+        # when this run actually downloaded the file.
+        'fetched_at': existing.get('fetched_at') or datetime.now(timezone.utc).isoformat(timespec='seconds'),
+    }
+
+
+def _refresh_fetched_at(sources: dict, filename: str) -> None:
+    if filename in sources:
+        sources[filename]['fetched_at'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
 
 
 def find_chrome_executable() -> Optional[str]:
@@ -467,6 +525,9 @@ def fetch_video(url: str, dest_dir: Path, basename: str, opts: FetchOptions) -> 
         '--sub-format', 'vtt/best',
         '--convert-subs', 'vtt',
         '--embed-subs',
+        # Embed source URL + title/uploader/etc. into the MP4's metadata tags,
+        # so the file itself records where it came from.
+        '--add-metadata',
         '-o', template,
         url,
     ]
@@ -536,9 +597,18 @@ def process_html_file(html_path: Path, opts: FetchOptions) -> tuple[int, int, in
     text = html_path.read_text(encoding='utf-8', errors='replace')
     soup = BeautifulSoup(text, 'html.parser')
     sidecar = html_path.with_name(html_path.stem + SIDECAR_SUFFIX)
+    sources = _load_sources(sidecar)
+    sources_dirty = False
 
     downloaded = skipped = failed = 0
     rewrites = 0
+
+    def _rewrite_anchor(el, attr, rel, url):
+        if not opts.rewrite_links:
+            return False
+        el[f'data-original-{attr}'] = url
+        el[attr] = rel
+        return True
 
     for el, attr, original in collect_links(soup):
         url = original.strip()
@@ -573,14 +643,20 @@ def process_html_file(html_path: Path, opts: FetchOptions) -> tuple[int, int, in
                     continue
                 target = result
                 downloaded += 1
+                _refresh_fetched_at(sources, target.name)
+                sources_dirty = True
+
+            _record_source(sources, target.name, url, 'video')
+            sources_dirty = True
 
             rel = f'{sidecar.name}/{target.name}'
-            if el.name == 'iframe':
-                _replace_iframe_with_video(soup, el, rel, url)
-            else:
-                el[f'data-original-{attr}'] = url
-                el[attr] = rel
-            rewrites += 1
+            if opts.rewrite_links:
+                if el.name == 'iframe':
+                    _replace_iframe_with_video(soup, el, rel, url)
+                else:
+                    el[f'data-original-{attr}'] = url
+                    el[attr] = rel
+                rewrites += 1
             continue
 
         bin_ext = url_binary_ext(url)
@@ -598,10 +674,14 @@ def process_html_file(html_path: Path, opts: FetchOptions) -> tuple[int, int, in
                     print(f'      {colored("failed", "red")}')
                     continue
                 downloaded += 1
+                _refresh_fetched_at(sources, fname)
+                sources_dirty = True
 
-            el[f'data-original-{attr}'] = url
-            el[attr] = f'{sidecar.name}/{fname}'
-            rewrites += 1
+            _record_source(sources, fname, url, 'binary')
+            sources_dirty = True
+
+            if _rewrite_anchor(el, attr, f'{sidecar.name}/{fname}', url):
+                rewrites += 1
             continue
 
         fname = article_filename(url)
@@ -620,19 +700,31 @@ def process_html_file(html_path: Path, opts: FetchOptions) -> tuple[int, int, in
             if not ok:
                 failed += 1
                 print(f'      {colored("failed", "red")}')
-                # Restore the original URL on the link if it was previously
-                # rewritten to point at a local copy that no longer exists.
-                if (el.get(attr) or '').strip() and not (el.get(attr) or '').startswith(('http://', 'https://')):
+                # Drop a stale entry for this filename and restore the original
+                # URL on the link if rewriting is enabled and we previously
+                # pointed at a local copy that no longer exists.
+                if fname in sources:
+                    del sources[fname]
+                    sources_dirty = True
+                if (
+                    opts.rewrite_links
+                    and (el.get(attr) or '').strip()
+                    and not (el.get(attr) or '').startswith(('http://', 'https://'))
+                ):
                     el[attr] = url
                     if el.has_attr(f'data-original-{attr}'):
                         del el[f'data-original-{attr}']
                     rewrites += 1
                 continue
             downloaded += 1
+            _refresh_fetched_at(sources, fname)
+            sources_dirty = True
 
-        el[f'data-original-{attr}'] = url
-        el[attr] = f'{sidecar.name}/{fname}'
-        rewrites += 1
+        _record_source(sources, fname, url, 'article')
+        sources_dirty = True
+
+        if _rewrite_anchor(el, attr, f'{sidecar.name}/{fname}', url):
+            rewrites += 1
 
     if rewrites:
         st = html_path.stat()
@@ -640,6 +732,9 @@ def process_html_file(html_path: Path, opts: FetchOptions) -> tuple[int, int, in
         # Preserve mtime so canvas_grab's planner doesn't see the rewritten page
         # as drift from the Canvas snapshot.
         os.utime(html_path, (st.st_atime, st.st_mtime))
+
+    if sources_dirty:
+        _save_sources(sidecar, sources)
 
     return (downloaded, skipped, failed)
 
@@ -737,7 +832,23 @@ def run(download_folder: str, opts: Optional[FetchOptions] = None,
         p for p in base.rglob('*.html')
         if ARCHIVE_FOLDER_NAME not in p.parts and not _is_inside_sidecar(p)
     )
+    if opts.only_paths:
+        # Match each pattern as a case-insensitive substring of the
+        # `<download_folder>`-relative POSIX path. Skipped files are still
+        # walked; we just don't fetch from them.
+        patterns = tuple(p.lower() for p in opts.only_paths)
+        before = len(html_files)
+        html_files = [
+            p for p in html_files
+            if any(pat in p.relative_to(base).as_posix().lower() for pat in patterns)
+        ]
+        print(
+            f'Filter {colored(", ".join(opts.only_paths), "cyan")} '
+            f'matched {colored(str(len(html_files)), "cyan")} of {before} HTML files'
+        )
     print(f'Scanning {colored(str(len(html_files)), "cyan")} HTML files in {colored(str(base), "cyan")}')
+    if not html_files:
+        return
 
     if chrome.enabled:
         chrome_exe = chrome.executable or find_chrome_executable()

@@ -28,9 +28,20 @@ def main():
         excludes = tuple(dict.fromkeys(
             [d.lower() for d in config.fetch_external.exclude_domains] + cli_excludes
         ))
+        cli_only = [
+            o.strip()
+            for raw in getattr(args, 'fetch_external_only', []) or []
+            for o in raw.split(',')
+            if o.strip()
+        ]
+        only = tuple(dict.fromkeys(list(config.fetch_external.only_paths) + cli_only))
+        cli_rewrite = getattr(args, 'rewrite_links', None)
+        rewrite = config.fetch_external.rewrite_links if cli_rewrite is None else cli_rewrite
         return canvas_grab.external_fetch.FetchOptions(
             verbose=getattr(args, 'fetch_external_verbose', False),
             exclude_domains=excludes,
+            only_paths=only,
+            rewrite_links=rewrite,
         )
 
     def _build_chrome_opts():
