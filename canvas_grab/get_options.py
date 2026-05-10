@@ -73,6 +73,17 @@ def get_options():
                         help="Skip URLs whose host matches the given domain (or any "
                         "subdomain of it). Repeatable, and accepts comma-separated lists. "
                         "Example: --fetch-external-exclude sfu.ca,example.com")
+    parser.add_argument("--with-chrome", dest="with_chrome", action="store_true",
+                        default=None,
+                        help="Drive SingleFile against a real Chrome (using a "
+                        "persistent profile) instead of the headless Docker "
+                        "image. Bypasses most anti-bot challenges and lets you "
+                        "preinstall extensions like uBlock Origin. Requires "
+                        "single-file-cli + Chrome.")
+    parser.add_argument("--chrome-user-data-dir", dest="chrome_user_data_dir",
+                        default=None,
+                        help="Override [fetch_external].chrome_user_data_dir for "
+                        "this run. Defaults to ~/.canvas_grab/chrome-profile.")
 
     args = parser.parse_args()
 

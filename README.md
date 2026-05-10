@@ -67,6 +67,38 @@ exclude_domains = ["sfu.ca"]
 
 CLI excludes are added to (not replacing) the ones in `config.toml`. The `--fetch-external` CLI flag still works on its own and ignores `enabled` (it always runs only the external fetch, no sync).
 
+### Driving a real Chrome (`--with-chrome`)
+
+The default Docker SingleFile is a vanilla headless Chromium and gets blocked by sites that fingerprint headless browsers (Cloudflare, Akamai, etc.). Switching to a real Chrome instance with a persistent profile defeats most of those challenges, and lets you preinstall extensions like uBlock Origin or accept consent banners once and have them stick.
+
+Add to `config.toml`:
+
+```toml
+[fetch_external]
+with_chrome = true
+chrome_user_data_dir = "~/.canvas_grab/chrome-profile"
+# chrome_executable = ""     # auto-detected; override only if needed
+# chrome_remote_port = 0     # 0 = pick a free port
+```
+
+Or pass `--with-chrome` (and optionally `--chrome-user-data-dir PATH`) on the CLI.
+
+Prerequisites for this mode:
+
+```bash
+npm install -g single-file-cli
+# Chrome (or Chromium) installed at a standard location
+```
+
+**One-time profile setup:** open Chrome at the same data dir manually so you can install extensions and accept any standing cookie banners — they'll persist across runs:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --user-data-dir=~/.canvas_grab/chrome-profile
+```
+
+Install uBlock Origin (or whatever else you want), close Chrome, then run `--fetch-external`. canvas_grab will spawn Chrome at that profile, run all fetches, and shut it down when finished.
+
 ## Getting Started
 
 1. Install Python

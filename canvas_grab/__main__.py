@@ -33,8 +33,20 @@ def main():
             exclude_domains=excludes,
         )
 
+    def _build_chrome_opts():
+        cli_with_chrome = getattr(args, 'with_chrome', None)
+        enabled = config.fetch_external.with_chrome if cli_with_chrome is None else cli_with_chrome
+        return canvas_grab.external_fetch.ChromeOptions(
+            enabled=enabled,
+            user_data_dir=getattr(args, 'chrome_user_data_dir', None) or config.fetch_external.chrome_user_data_dir,
+            executable=config.fetch_external.chrome_executable,
+            remote_port=config.fetch_external.chrome_remote_port,
+        )
+
     if getattr(args, 'fetch_external', False):
-        canvas_grab.external_fetch.run(config.download_folder, _build_fetch_opts())
+        canvas_grab.external_fetch.run(
+            config.download_folder, _build_fetch_opts(), _build_chrome_opts(),
+        )
         if not noupdate:
             canvas_grab.version.check_latest_version()
         return
@@ -93,7 +105,9 @@ def main():
     if config.fetch_external.enabled:
         print()
         print(colored('Archiving external resources from downloaded pages...', 'cyan'))
-        canvas_grab.external_fetch.run(config.download_folder, _build_fetch_opts())
+        canvas_grab.external_fetch.run(
+            config.download_folder, _build_fetch_opts(), _build_chrome_opts(),
+        )
 
     if not noupdate:
         canvas_grab.version.check_latest_version()
