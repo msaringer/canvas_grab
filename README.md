@@ -232,6 +232,10 @@ canvas_grab now downloads actual HTML page content from Canvas instead of creati
 
 **Note:** The first sync after upgrading will re-download all pages as the content changes from redirect files to actual HTML.
 
+## Announcements
+
+Course announcements are saved alongside pages and assignments under `Announcements/<YYYY-MM-DD>_<title>.html`. Each file contains the title, posted date, author, source URL, and the announcement's HTML body — so they stay readable offline and play nicely with `--fetch-external` if the announcement embeds external links or videos. The API works even when a course has the Announcements sidebar tab hidden.
+
 ## Common Issues
 
 * **Acquire API token** Access Token can be obtained at "Account - Settings - New Access Token".

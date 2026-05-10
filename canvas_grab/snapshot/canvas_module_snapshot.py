@@ -6,6 +6,7 @@ from .snapshot_file import from_canvas_file
 from .snapshot_link import SnapshotLink
 from .snapshot_page import SnapshotPage
 from .snapshot_assignment import SnapshotAssignment
+from .snapshot_announcement import from_canvas_topic
 from ..utils import normalize_path, file_regex
 from ..request_batcher import RequestBatcher
 from datetime import datetime
@@ -190,6 +191,16 @@ class CanvasModuleSnapshot(Snapshot):
                 self.add_to_snapshot(key, value)
 
             print(f'  {len(assignments)} assignments in total')
+
+            # Announcements
+            yield (None, '正在获取通知', None)
+            announcements = request_batcher.get_announcements() or []
+            for topic in announcements:
+                key, snapshot, attachments = from_canvas_topic(topic)
+                self.add_to_snapshot(key, snapshot)
+                for attach_key, attach_snapshot in attachments:
+                    self.add_to_snapshot(attach_key, attach_snapshot)
+            print(f'  {len(announcements)} announcements in total')
 
     def get_snapshot(self):
         """Get the previously-taken snapshot

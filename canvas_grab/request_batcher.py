@@ -100,3 +100,16 @@ class RequestBatcher:
         submission_types = getattr(assignment, 'submission_types', [])
         return ('discussion_topic' in submission_types or
                 'online_quiz' in submission_types)
+
+    def get_announcements(self):
+        # The announcements API works even when the sidebar tab is hidden,
+        # so we don't gate on get_tabs() here.
+        if 'announcements' not in self.cache:
+            try:
+                self.cache['announcements'] = list(
+                    self.course.get_discussion_topics(only_announcements=True)
+                )
+            except Exception:
+                self.cache['announcements'] = []
+
+        return self.cache['announcements']
